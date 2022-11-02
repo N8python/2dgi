@@ -407,7 +407,7 @@ async function main() {
                         if (fy < 0 || fy > clientWidth - 1) {
                             continue;
                         }
-                        const idx = ((clientWidth - (fy)) * clientWidth + (fx)) * 4.0;
+                        const idx = ((clientHeight - fy) * clientWidth + (fx)) * 4.0;
                         colorBuffer[idx] = effectController.rainbow ? _rainbowCol.r : SRGBToLinear(effectController.color[0]);
                         colorBuffer[idx + 1] = effectController.rainbow ? _rainbowCol.g : SRGBToLinear(effectController.color[1]);
                         colorBuffer[idx + 2] = effectController.rainbow ? _rainbowCol.b : SRGBToLinear(effectController.color[2]);
