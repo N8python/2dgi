@@ -54,13 +54,13 @@ vec3 dithering( vec3 color ) {
         float distToSurface = texture2D(distMap, samplePoint).x;
         currentDist += distToSurface;
         if (distToSurface < 0.0) {
-          currentDist -= distToSurface;
+          currentDist -= 2.0 * distToSurface;
           hit = true;
           break;
         }
       }
       if (hit) {
-        vec4 hitInfo = texture2D(albedoMap, origin + dir * currentDist).rgba;
+        vec4 hitInfo = texture2D(albedoMap, origin + (dir) * currentDist).rgba;
         return hitInfo.rgb * hitInfo.a;
       } else {
         return vec3(0.0);
@@ -71,8 +71,9 @@ vec3 dithering( vec3 color ) {
             vec4 meta = texture2D(metaMap, vUv);
             vec4 dist = texture2D(distMap, vUv);
             vec4 noise = texture2D(bluenoise, vUv * (resolution / vec2(1024.0)));
-            if (meta.r == 1.0) {
-              gl_FragColor = vec4(diffuse.rgb, 1.0);
+           if (meta.r == 1.0) {
+             gl_FragColor = vec4(0.0, 0.0, 0.0/*diffuse.rgb * 0.5*/, 1.0);
+             return;
             } else {
               vec3 finalColor = vec3(0.0);
               float count = 0.0;

@@ -83,6 +83,7 @@ uniform sampler2D tex;
 varying vec2 vUv;
 void main() {
     gl_FragColor = vec4(vUv * (1.0 - round(texture2D(tex, vUv).x)), 0.0, 1.0);
+
 }
 `
     }));
@@ -236,6 +237,7 @@ async function main() {
     // Setup basic renderer, controls, and profiler
     const clientWidth = 512; //window.innerWidth * 0.99;
     const clientHeight = 512; //window.innerHeight * 0.98;
+    const giScale = 0.5;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, clientWidth / clientHeight, 0.1, 1000);
     camera.position.set(50, 75, 50);
@@ -255,11 +257,11 @@ async function main() {
     document.body.appendChild(stats.dom);
     // Build postprocessing stack
     // Render Targets
-    const defaultTexture = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
-        minFilter: THREE.LinearFilter,
+    const defaultTexture = new THREE.WebGLRenderTarget(clientWidth * giScale, clientHeight * giScale, {
+        minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter
     });
-    defaultTexture.depthTexture = new THREE.DepthTexture(clientWidth, clientHeight, THREE.FloatType);
+    defaultTexture.depthTexture = new THREE.DepthTexture(clientWidth * giScale, clientHeight * giScale, THREE.FloatType);
     const colorBuffer = new Float32Array(clientWidth * clientHeight * 4);
     const metaBuffer = new Float32Array(clientWidth * clientHeight * 4);
     let colorTex = new THREE.DataTexture(colorBuffer, clientWidth, clientHeight);
@@ -408,9 +410,9 @@ async function main() {
                             continue;
                         }
                         const idx = ((clientHeight - fy) * clientWidth + (fx)) * 4.0;
-                        colorBuffer[idx] = effectController.rainbow ? _rainbowCol.r : SRGBToLinear(effectController.color[0]);
-                        colorBuffer[idx + 1] = effectController.rainbow ? _rainbowCol.g : SRGBToLinear(effectController.color[1]);
-                        colorBuffer[idx + 2] = effectController.rainbow ? _rainbowCol.b : SRGBToLinear(effectController.color[2]);
+                        colorBuffer[idx] = effectController.rainbow ? _rainbowCol.r : (effectController.color[0]);
+                        colorBuffer[idx + 1] = effectController.rainbow ? _rainbowCol.g : (effectController.color[1]);
+                        colorBuffer[idx + 2] = effectController.rainbow ? _rainbowCol.b : (effectController.color[2]);
                         colorBuffer[idx + 3] = effectController.emissive;
                         metaBuffer[idx] = effectController.solid;
                     }
@@ -428,7 +430,7 @@ async function main() {
         py = undefined;
         drawLine(e, true);
     });
-    const sdfGen = makeSDFGenerator(clientWidth, clientHeight, renderer);
+    const sdfGen = makeSDFGenerator(clientWidth * giScale, clientHeight * giScale, renderer);
     const bluenoise = await new THREE.TextureLoader().loadAsync("bluenoise.png");
     bluenoise.wrapS = THREE.RepeatWrapping;
     bluenoise.wrapT = THREE.RepeatWrapping;
@@ -436,15 +438,109 @@ async function main() {
     bluenoise.minFilter = THREE.NearestFilter;
     const composer = new EffectComposer(renderer);
     const smaaPass = new SMAAPass(clientWidth, clientHeight);
-    const effectPass = new ShaderPass(EffectShader);
-    composer.addPass(effectPass);
+    const effectQuad = new FullScreenQuad(new THREE.ShaderMaterial(EffectShader));
+    const effectPass = effectQuad.material;
+    const CopyShader = {
+
+        uniforms: {
+            'meta': { value: null },
+            'diffuse': { value: null },
+            'color': { value: null },
+            'dist': { value: null },
+            'opacity': { value: 1.0 },
+            'edgeRadius': { value: 2.0 },
+            'edgeStrength': { value: 4.0 },
+            'resolution': { value: new THREE.Vector2(clientWidth, clientHeight) },
+            'giScale': { value: giScale }
+        },
+
+        vertexShader: /* glsl */ `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+            }`,
+
+        fragmentShader: /* glsl */ `
+            uniform float opacity;
+            uniform sampler2D diffuse;
+            uniform sampler2D meta;
+            uniform sampler2D color;
+            uniform vec2 resolution;
+            uniform float edgeRadius;
+            uniform float edgeStrength;
+            uniform sampler2D dist;
+            uniform float giScale;
+            varying vec2 vUv;
+            #define PI 3.141592653589793
+            void main() {
+                float metaVal = texture2D( meta, vUv ).x;
+                vec2 pushDir = vec2(0.0);
+                float count = 0.0;
+                for(float x = -edgeRadius; x <= edgeRadius; x++) {
+                    for(float y = -edgeRadius; y <= edgeRadius; y++) {
+                        vec2 sampleUv = (vUv * resolution + vec2(x, y)) / resolution;
+                        float metaData = texture2D(meta, sampleUv).x;
+                        if (metaData == metaVal) {
+                            pushDir += (x == 0.0 && y == 0.0) ? vec2(x, y) : normalize(vec2(x, y));
+                            count += 1.0;
+                        }
+                    }
+                }
+                if (count == 0.0) {
+                    count = 1.0;
+                }
+                pushDir /= count;
+               //pushDir = normalize(pushDir);
+               vec2 sampleUv;
+               float pushStrength = edgeStrength;
+               for(int i = 0; i < 5; i++) {
+                sampleUv = length(pushDir) > 0.0 ? vUv + pushStrength * (pushDir / resolution) : vUv;
+                if (texture2D(meta, sampleUv).x == metaVal) {
+                    break;
+                }
+                pushStrength *= 0.5;
+               }
+               vec4 bestSample = texture2D(diffuse, sampleUv);
+               vec4 col = texture2D(color, vUv);
+               if (length(bestSample.rgb) == 0.0 && metaVal == 0.0) {
+                //float distSample = texture2D(dist, sampleUv).x;
+                /* vec2 sampleStep = 1.0 / (resolution * giScale);*/
+
+                /*sampleUv += 4.0 * gradient * sampleStep;
+                bestSample = texture2D(diffuse, sampleUv);
+                //bestSample = texture2D(diffuse, sampleUv);*/
+                vec2 sampleStep = 1.0 / (resolution * giScale);
+                vec2 gradient = normalize(vec2(
+                    texture2D(dist, sampleUv + vec2(sampleStep.x, 0.0)).x - texture2D(dist, sampleUv - vec2(sampleStep.x, 0.0)).x,
+                    texture2D(dist, sampleUv + vec2(0.0, sampleStep.y)).x - texture2D(dist, sampleUv - vec2(0.0, sampleStep.y)).x
+                ));
+                vec2 perpDir = vec2(-gradient.y, gradient.x);
+                for(float i = 0.0; i <= 10.0; i++) {
+                    bestSample = texture2D(diffuse, sampleUv + (mod(i, 2.0) == 0.0 ? 1.0 : -1.0) * pow(2.0, floor(i / 2.0)) * vec2(sin((i / 10.0) * 2.0 * PI), cos((i / 10.0) * 2.0 * PI)) * sampleStep);
+                    if (length(bestSample.rgb) != 0.0) {
+                        break;
+                    }
+                   /* bestSample = texture2D(diffuse, sampleUv + (mod(i, 2.0) == 0.0 ? 1.0 : -1.0) * pow(2.0, floor(i / 2.0)) * gradient * sampleStep);
+                    if (length(bestSample.rgb) != 0.0) {
+                        break;
+                    }*/
+                }
+               }
+                gl_FragColor = vec4(mix(bestSample.rgb, col.rgb, metaVal), 1.0);
+            }`
+
+    };
+
+    const copyPass = new ShaderPass(CopyShader);
+    //composer.addPass(effectPass);
+    composer.addPass(copyPass);
     const blurs = [];
     for (let i = 0; i < 6; i++) {
         const hblur = new ShaderPass(HorizontalBlurShader);
         const vblur = new ShaderPass(VerticalBlurShader);
         blurs.push([hblur, vblur]);
     }
-    // composer.addPass(effectPass);
     for (const [hblur, vblur] of blurs) {
         composer.addPass(hblur);
         composer.addPass(vblur);
@@ -502,13 +598,20 @@ async function main() {
         //  renderer.setRenderTarget(defaultTexture);
         // renderer.clear();
         //renderer.render(scene, camera);
-        effectPass.uniforms["resolution"].value = new THREE.Vector2(clientWidth, clientHeight);
+        effectPass.uniforms["resolution"].value = new THREE.Vector2(clientWidth * giScale, clientHeight * giScale);
         effectPass.uniforms["albedoMap"].value = colorTex;
         effectPass.uniforms["metaMap"].value = metaTex;
         effectPass.uniforms["distMap"].value = distMap;
         effectPass.uniforms["bluenoise"].value = bluenoise;
         effectPass.uniforms["time"].value = performance.now() / 1000;
         effectPass.uniforms["raysPerPixel"].value = effectController.raysPerPixel;
+        renderer.setRenderTarget(defaultTexture);
+        effectQuad.render(renderer);
+        copyPass.uniforms.diffuse.value = defaultTexture.texture;
+        copyPass.uniforms.meta.value = metaTex;
+        copyPass.uniforms.color.value = colorTex;
+        copyPass.uniforms.dist.value = distMap;
+        /*blurs[0][0].uniforms.tDiffuse.value = defaultTexture.texture;*/
         composer.render();
         controls.update();
         stats.update();
