@@ -16,37 +16,30 @@ const makeSDFGenerator = (clientWidth, clientHeight, renderer) => {
     let finalTarget = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let outsideRenderTarget = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let insideRenderTarget = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let outsideRenderTarget2 = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let insideRenderTarget2 = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let outsideRenderTargetFinal = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     let insideRenderTargetFinal = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
-        type: THREE.FloatType
     });
     const uvRender = new FullScreenQuad(new THREE.ShaderMaterial({
         uniforms: {
@@ -62,8 +55,9 @@ const makeSDFGenerator = (clientWidth, clientHeight, renderer) => {
         fragmentShader: /*glsl*/ `
     uniform sampler2D tex;
     varying vec2 vUv;
+    #include <packing>
     void main() {
-        gl_FragColor = vec4(vUv * (round(texture2D(tex, vUv).x)), 0.0, 1.0);
+        gl_FragColor = pack2HalfToRGBA(vUv * (round(texture2D(tex, vUv).x)));
     }
     `
     }));
@@ -81,8 +75,9 @@ void main() {
         fragmentShader: /*glsl*/ `
 uniform sampler2D tex;
 varying vec2 vUv;
+#include <packing>
 void main() {
-    gl_FragColor = vec4(vUv * (1.0 - round(texture2D(tex, vUv).x)), 0.0, 1.0);
+    gl_FragColor = pack2HalfToRGBA(vUv * (1.0 - round(texture2D(tex, vUv).x)));
 
 }
 `
@@ -107,6 +102,7 @@ void main() {
     uniform float offset;
     uniform float level;
     uniform float maxSteps;
+    #include <packing>
     void main() {
         float closestDist = 9999999.9;
         vec2 closestPos = vec2(0.0);
@@ -117,7 +113,7 @@ void main() {
               vec2 voffset = vUv;
               voffset += vec2(x, y) * vec2(${1/clientWidth}, ${1/clientHeight}) * offset;
      
-              vec2 pos = texture2D(tex, voffset).xy;
+              vec2 pos = unpackRGBATo2Half(texture2D(tex, voffset));
               float dist = distance(pos.xy, vUv);
      
               if(pos.x != 0.0 && pos.y != 0.0 && dist < closestDist)
@@ -127,7 +123,7 @@ void main() {
               }
            }
         }
-        gl_FragColor = vec4(closestPos, 0.0, 1.0);
+        gl_FragColor = pack2HalfToRGBA(closestPos);
     }
     `
     }));
@@ -145,15 +141,17 @@ void main() {
         fragmentShader: /*glsl*/ `
     varying vec2 vUv;
     uniform sampler2D tex;
+    #include <packing>
     void main() {
-        gl_FragColor = vec4(vec3(distance(texture2D(tex, vUv).xy, vUv)), 1.0);
+        gl_FragColor = packDepthToRGBA(clamp(distance(unpackRGBATo2Half(texture2D(tex, vUv)), vUv), 0.0, 1.0));
     }
     `
     }));
     const compositeRender = new FullScreenQuad(new THREE.ShaderMaterial({
         uniforms: {
             inside: { value: insideRenderTargetFinal.texture },
-            outside: { value: outsideRenderTargetFinal.texture }
+            outside: { value: outsideRenderTargetFinal.texture },
+            tex: { value: null }
         },
         vertexShader: /*glsl*/ `
         varying vec2 vUv;
@@ -166,13 +164,15 @@ void main() {
         varying vec2 vUv;
         uniform sampler2D inside;
         uniform sampler2D outside;
+        uniform sampler2D tex;
+        #include <packing>
         void main() {
-            float i = texture2D(inside, vUv).x;
-            float o = texture2D(outside, vUv).x;
-            if (i == 0.0) {
-                gl_FragColor = vec4(vec3(o), 1.0);
+            float i = unpackRGBAToDepth(texture2D(inside, vUv));
+            float o = unpackRGBAToDepth(texture2D(outside, vUv));
+            if (texture2D(tex, vUv).x == 0.0) {
+                gl_FragColor = packDepthToRGBA(0.5 + 0.5 * o);
             } else {
-                gl_FragColor = vec4(vec3(-i), 1.0);
+                gl_FragColor = packDepthToRGBA(0.5 + 0.5 * -i);
             }
             //gl_FragColor = vec4(vec3(i), 1.0);
         }
@@ -184,7 +184,7 @@ void main() {
             ft = new THREE.WebGLRenderTarget(clientWidth, clientHeight, {
                 minFilter: THREE.NearestFilter,
                 magFilter: THREE.NearestFilter,
-                type: THREE.FloatType
+                //type: THREE.FloatType
             });
         }
         image.minFilter = THREE.NearestFilter;
@@ -192,6 +192,7 @@ void main() {
         uvRender.material.uniforms.tex.value = image;
         renderer.setRenderTarget(outsideRenderTarget);
         uvRender.render(renderer);
+
         const passes = Math.ceil(Math.log(Math.max(clientWidth, clientHeight)) / Math.log(2.0));
         let lastTarget = outsideRenderTarget;
         let target;
@@ -229,6 +230,7 @@ void main() {
         distanceFieldRender.material.uniforms.tex.value = target.texture;
         distanceFieldRender.render(renderer);
         renderer.setRenderTarget(ft);
+        compositeRender.material.uniforms.tex.value = image;
         compositeRender.render(renderer);
         return ft.texture;
     }
@@ -261,14 +263,14 @@ async function main() {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter
     });
-    defaultTexture.depthTexture = new THREE.DepthTexture(clientWidth * giScale, clientHeight * giScale, THREE.FloatType);
+    //defaultTexture.depthTexture = new THREE.DepthTexture(clientWidth * giScale, clientHeight * giScale, THREE.FloatType);
     const colorBuffer = new Float32Array(clientWidth * clientHeight * 4);
-    const metaBuffer = new Float32Array(clientWidth * clientHeight * 4);
+    const metaBuffer = new Uint8Array(clientWidth * clientHeight);
     let colorTex = new THREE.DataTexture(colorBuffer, clientWidth, clientHeight);
     colorTex.type = THREE.FloatType;
     colorTex.needsUpdate = true;
     let metaTex = new THREE.DataTexture(metaBuffer, clientWidth, clientHeight);
-    metaTex.type = THREE.FloatType;
+    metaTex.format = THREE.RedFormat;
     metaTex.needsUpdate = true;
     const gui = new GUI();
     const effectController = {
@@ -409,12 +411,13 @@ async function main() {
                         if (fy < 0 || fy > clientWidth - 1) {
                             continue;
                         }
-                        const idx = ((clientHeight - fy) * clientWidth + (fx)) * 4.0;
+                        const idxM = ((clientHeight - fy) * clientWidth + (fx));
+                        const idx = idxM * 4;
                         colorBuffer[idx] = effectController.rainbow ? _rainbowCol.r : (effectController.color[0]);
                         colorBuffer[idx + 1] = effectController.rainbow ? _rainbowCol.g : (effectController.color[1]);
                         colorBuffer[idx + 2] = effectController.rainbow ? _rainbowCol.b : (effectController.color[2]);
                         colorBuffer[idx + 3] = effectController.emissive;
-                        metaBuffer[idx] = effectController.solid;
+                        metaBuffer[idxM] = 255.0 * effectController.solid;
                     }
                 }
             }
@@ -511,11 +514,6 @@ async function main() {
                 bestSample = texture2D(diffuse, sampleUv);
                 //bestSample = texture2D(diffuse, sampleUv);*/
                 vec2 sampleStep = 1.0 / (resolution * giScale);
-                vec2 gradient = normalize(vec2(
-                    texture2D(dist, sampleUv + vec2(sampleStep.x, 0.0)).x - texture2D(dist, sampleUv - vec2(sampleStep.x, 0.0)).x,
-                    texture2D(dist, sampleUv + vec2(0.0, sampleStep.y)).x - texture2D(dist, sampleUv - vec2(0.0, sampleStep.y)).x
-                ));
-                vec2 perpDir = vec2(-gradient.y, gradient.x);
                 for(float i = 0.0; i <= 10.0; i++) {
                     bestSample = texture2D(diffuse, sampleUv + (mod(i, 2.0) == 0.0 ? 1.0 : -1.0) * pow(2.0, floor(i / 2.0)) * vec2(sin((i / 10.0) * 2.0 * PI), cos((i / 10.0) * 2.0 * PI)) * sampleStep);
                     if (length(bestSample.rgb) != 0.0) {
@@ -571,9 +569,10 @@ async function main() {
 		}`
     }));
     composer.addPass(smaaPass);
+    let distMap;
 
     function animate() {
-        const distMap = sdfGen(metaTex, false);
+        distMap = sdfGen(metaTex, false);
         // colorBuffer[i] = 1;
         // i++;
         colorTex.needsUpdate = true;

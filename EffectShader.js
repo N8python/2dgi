@@ -30,6 +30,7 @@ const EffectShader = {
         varying vec2 vUv;
     #define PI 3.141592653589793
     #include <common>
+    #include <packing>
 // based on https://www.shadertoy.com/view/MslGR8
 vec3 dithering( vec3 color ) {
   //Calculate grid position
@@ -51,7 +52,7 @@ vec3 dithering( vec3 color ) {
           || samplePoint.y < 0.0 || samplePoint.y > 1.0) {
             break;
         }
-        float distToSurface = texture2D(distMap, samplePoint).x;
+        float distToSurface = 2.0 * unpackRGBAToDepth(texture2D(distMap, samplePoint)) - 1.0;
         currentDist += distToSurface;
         if (distToSurface < 0.0) {
           currentDist -= 2.0 * distToSurface;
