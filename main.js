@@ -572,11 +572,11 @@ async function main() {
     let distMap;
 
     function animate() {
-        distMap = sdfGen(metaTex, false);
         // colorBuffer[i] = 1;
         // i++;
         colorTex.needsUpdate = true;
         metaTex.needsUpdate = true;
+        distMap = sdfGen(metaTex, false);
         blurs.forEach(([hblur, vblur], i) => {
             const blurSize = effectController.blurSize ** (blurs.length - i - 1);
             hblur.uniforms["resolution"].value = new THREE.Vector2(clientWidth, clientHeight);
